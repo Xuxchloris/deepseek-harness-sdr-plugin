@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
@@ -27,8 +27,15 @@ async function readManagedMarker(path) {
 async function installManagedPreset() {
   const destination = targetPreset();
   const existing = await readManagedMarker(destination);
-  if (existing && existing.package !== PACKAGE_NAME) {
-    throw new Error(`dsh-sdr: refusing to overwrite a preset managed by ${existing.package}`);
+  let destinationExists = false;
+  try {
+    await stat(destination);
+    destinationExists = true;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  if (destinationExists && (!existing || existing.package !== PACKAGE_NAME)) {
+    throw new Error(`dsh-sdr: refusing to overwrite an unmanaged preset at ${destination}`);
   }
   try {
     await mkdir(destination, { recursive: true });
