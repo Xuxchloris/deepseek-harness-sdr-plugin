@@ -8,4 +8,4 @@ data/exports/*
 *.log
 .npm-cache/
 .pnpm-store/
-.tmp-dsh-home/
+.tmp-dsh-home*/
