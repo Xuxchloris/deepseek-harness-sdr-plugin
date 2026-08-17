@@ -18,7 +18,7 @@ $DSH_HOME/.agent-presets/sdr
 
 Windows 上未设置 `DSH_HOME` 时，默认是 `%USERPROFILE%\.dsh\.agent-presets\sdr`。已有同名且没有 `.dsh-sdr-managed.json` 标记的 preset 不会被覆盖。
 
-启动 Python MCP 服务后重启 `dsh web`，新建会话时即可选择「SDR 数字员工」。preset 只对新建或空白会话生效。
+先启动 Python MCP 服务，再重启 `dsh web`，新建会话时即可选择「SDR 数字员工」。MCP 不可用时 preset 会拒绝挂载，避免 Agent 在没有业务工具的情况下虚构阶段进度。preset 只对新建或空白会话生效。
 
 ## 运行
 

@@ -16,7 +16,7 @@
     serverName: sdr
     transport: streamable-http
     url: http://127.0.0.1:8765/mcp
-    failOnStartupError: false
+    failOnStartupError: true
     reconnect:
       enabled: true
 - id: tool-ask-user
