@@ -57,3 +57,51 @@ export interface ConnectorConfigRequest {
   channel: ConnectorChannel;
   settings: ConnectorSettings;
 }
+
+export type KnowledgeType = "product" | "brand" | "policy" | "case" | "market" | "company";
+
+export interface KnowledgeRecord {
+  knowledge_id: string;
+  type: KnowledgeType;
+  title: string;
+  content: string;
+  tags: string[];
+  source: string;
+  version: number;
+  status: "approved";
+  chunk_count?: number;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface KnowledgeSearchResult extends KnowledgeRecord {
+  relevance: number;
+  citation: string;
+  retrieval: {
+    lexical: number;
+    semantic: number;
+    reranked: number;
+    matched_chunks: Array<{ chunk_id: string; score: number; excerpt: string }>;
+  };
+}
+
+export interface RetrievalEvaluation {
+  k: number;
+  queries: number;
+  recall_at_k: number;
+  mrr: number;
+  per_query: Array<{
+    query: string;
+    expected: string[];
+    hits: string[];
+    recall_at_k: number;
+    reciprocal_rank: number;
+  }>;
+}
+
+export interface KnowledgeRepository {
+  upsert(input: Omit<KnowledgeRecord, "knowledge_id" | "version" | "status" | "updated_at" | "updated_by">): Promise<KnowledgeRecord>;
+  search(query: string, options?: { types?: KnowledgeType[]; limit?: number }): Promise<KnowledgeSearchResult[]>;
+  list(options?: { type?: KnowledgeType }): Promise<KnowledgeRecord[]>;
+  evaluate(input: { queries: Array<{ text: string; types?: KnowledgeType[]; relevant_knowledge_ids: string[] }>; k?: number }): Promise<RetrievalEvaluation>;
+}

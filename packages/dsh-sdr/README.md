@@ -43,6 +43,7 @@ SdrService (Node.js)
         +-- Lead Registry + canonical dedupe
         +-- approval hash gate
         +-- audit event store
+        +-- Hybrid RAG (BM25 + optional embeddings + reranker)
         +-- ConnectorRegistry
               +-- email      (dry-run)
               +-- whatsapp   (dry-run placeholder)
@@ -50,6 +51,39 @@ SdrService (Node.js)
 ```
 
 默认状态文件为 `%USERPROFILE%\\.dsh\\.dsh-sdr\\state.json`，也可以设置 `DSH_SDR_DATA_FILE` 指定路径。状态文件只保存本地合成演示数据，不需要凭证。未来可以把 `JsonStore` 换成 SQLite/PostgreSQL adapter，把 `ConnectorRegistry` 中的 dry-run connector 换成 SMTP/SES、WhatsApp Business API、HubSpot、Salesforce 或飞书实现，SOP 和审批工具接口不变。
+
+## 记忆架构
+
+插件采用四层记忆，不把聊天记录直接当成企业事实：
+
+```text
+DSH 会话记忆       当前对话和短期上下文
+SDR 任务状态       阶段、客户、草稿、审批、结案
+KnowledgeBase      产品、品牌、认证、政策、案例、市场资料
+审计/来源           版本、来源、更新时间、引用关系
+```
+
+`KnowledgeBase` 当前使用原子 JSON adapter，支持跨任务保存、分块、BM25 风格全文召回、可注入 embedding provider 的语义召回、混合排序、确定性 reranker，以及来源/版本/citation。Agent 自动在任务解析、背调、评分、开发信、报价和结案阶段检索已批准知识，并把 `knowledge_id@version` 写入草稿引用和结案报告。
+
+默认安装不需要外部服务：没有 embedding provider 时仍可离线运行全文 RAG。生产部署可以使用 `lib/postgres-rag.js` 中的 `PostgresKnowledgeRepository`，通过注入现有 `pg` pool 替换存储，并配置 PostgreSQL 全文索引、`pgvector` 和 embedding/reranker。RAG 评测工具 `sdr_knowledge_evaluate` 返回 Recall@K 和 MRR，建议用一组人工标注查询作为上线回归集。
+
+生产侧注入方式保持业务接口不变：
+
+```js
+const knowledge = new PostgresKnowledgeRepository({ pool, embedder, reranker });
+const sdr = new SdrService({ store, knowledge });
+await knowledge.ensureSchema();
+```
+
+`pg`、embedding 服务和数据库凭证由部署环境提供，不会进入插件参数或审计日志。
+
+如需让 Agent 把你确认过的产品、品牌或报价规则沉淀下来，部署时开启：
+
+```powershell
+$env:DSH_SDR_AGENT_KNOWLEDGE = '1'
+```
+
+然后 Agent 可调用 `sdr_knowledge_upsert`。每条记录必须有类型、来源和内容，版本更新会写入审计。没有开关时知识库仍可检索，但 Agent 不能写入。Letta 不作为 DSH 的第二个 Agent loop；如未来需要，可只实现一个可选的 episodic-memory adapter，不让它修改产品事实或审批状态。
 
 ## 部署配置与 Agent 覆盖
 

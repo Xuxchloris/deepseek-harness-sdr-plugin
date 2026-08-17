@@ -3,7 +3,8 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { ConnectorRegistry, DryRunConnector, JsonStore, SdrService } from "../lib/domain.js";
+import { ConnectorRegistry, DryRunConnector, JsonStore, KnowledgeBase, SdrService } from "../lib/domain.js";
+import { HybridRagRetriever } from "../lib/rag.js";
 
 async function service() {
   const directory = await mkdtemp(join(tmpdir(), "dsh-sdr-test-"));
@@ -69,7 +70,7 @@ test("状态文件使用原子 JSON 持久化", async () => {
   await sdr.createTask({ task: "开发 1 个美国客户", campaignVersion: "persist" });
   const persisted = JSON.parse(await readFile(store.path, "utf8"));
   assert.equal(Object.keys(persisted.tasks).length, 1);
-  assert.equal(persisted.version, 2);
+  assert.equal(persisted.version, 3);
 });
 
 test("connector registry 支持后续 WhatsApp/CRM 实现替换", async () => {
@@ -99,4 +100,43 @@ test("Agent 配置需要部署开关，并保留部署基线且拒绝敏感值",
   assert.equal(email.effective_config.port, 587);
   assert.equal(email.deployment_config.password_ref, "DSH_SMTP_PASSWORD");
   await assert.rejects(() => sdr.configureConnector({ channel: "email", settings: { password: "plain-secret" } }), /敏感字段/);
+});
+
+test("企业知识跨服务实例持久化，并自动注入开发信引用", async () => {
+  const { store } = await service();
+  const writer = new SdrService({ store, allowAgentKnowledge: true });
+  const entry = await writer.knowledgeUpsert({ type: "product", title: "户外用品核心卖点", content: "我们的户外用品支持 BPA-free 材料、可定制包装，MOQ 为 500 件。", tags: ["户外用品", "MOQ"], source: "user-guided-catalogue" });
+  const reloaded = new SdrService({ store: new JsonStore(store.path) });
+  const searched = await reloaded.knowledgeSearch("户外用品 MOQ");
+  assert.equal(searched.entries[0].knowledge_id, entry.knowledge_id);
+
+  const created = await reloaded.createTask({ task: "开发 1 个美国户外用品客户", campaignVersion: "knowledge-flow" });
+  const parsed = await reloaded.nextStep(created.task_id);
+  assert.equal(parsed.result.knowledge[0].knowledge_id, entry.knowledge_id);
+  for (let index = 0; index < 4; index += 1) await reloaded.nextStep(created.task_id);
+  const drafts = await reloaded.getDrafts(created.task_id);
+  assert.match(drafts.drafts[0].body, /BPA-free/);
+  assert.ok(drafts.drafts[0].citations.some((citation) => citation.includes(entry.knowledge_id)));
+});
+
+test("混合 RAG 支持语义召回、来源版本引用和 Recall@K/MRR 评测", async () => {
+  const { store } = await service();
+  const embedder = {
+    async embed(text) {
+      return /防水|rain|protection/i.test(text) ? [1, 0] : [0, 1];
+    },
+  };
+  const knowledge = new KnowledgeBase({ store, retriever: new HybridRagRetriever({ embedder }) });
+  const tent = await knowledge.upsert({ type: "product", title: "防水户外帐篷", content: "适合雨季露营，支持可定制包装。", source: "catalogue-v1" });
+  await knowledge.upsert({ type: "product", title: "保温水壶", content: "适合日常户外饮水。", source: "catalogue-v1" });
+
+  const hits = await knowledge.search("rain protection", { limit: 1 });
+  assert.equal(hits[0].knowledge_id, tent.knowledge_id);
+  assert.equal(hits[0].citation, `${tent.knowledge_id}@v1 (catalogue-v1)`);
+  assert.equal(hits[0].retrieval.semantic, 1);
+  assert.equal(hits[0].retrieval.matched_chunks.length, 0);
+
+  const metrics = await knowledge.evaluate({ queries: [{ text: "rain protection", relevant_knowledge_ids: [tent.knowledge_id] }], k: 1 });
+  assert.equal(metrics.recall_at_k, 1);
+  assert.equal(metrics.mrr, 1);
 });

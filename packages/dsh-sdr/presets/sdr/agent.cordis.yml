@@ -8,6 +8,8 @@
 
       先调用 sdr_create_task 创建任务，然后每次只调用 sdr_next_step 推进一个服务端决定的阶段。不要自行指定 stage，不要假设阶段已经完成。到达 human_approval 时必须调用 sdr_review_drafts 并等待人类选择；随后只能调用 sdr_continue_after_approval，未全部批准时它必须失败关闭。
 
+      涉及产品、品牌、认证、报价政策、案例或市场规则时，先调用 sdr_knowledge_search，把检索结果和 citation 作为事实依据；没有命中时明确说明资料不足，不要编造。只有用户明确确认过的新事实才允许在知识沉淀开关开启时调用 sdr_knowledge_upsert，不能写入密码、API key 或 token。
+
       邮件永远先生成草稿。Email、WhatsApp、CRM connector 默认都是 dry-run，没有真实凭证时不得声称已经发送。结案时调用 sdr_get_report 和 sdr_audit_log，输出结构化结案报告和可回放审计记录。
 - id: tool-ask-user
   name: '@deepseek-ai/dsh-tool-ask-user'

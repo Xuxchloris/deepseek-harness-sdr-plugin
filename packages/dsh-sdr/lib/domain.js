@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { evaluateRetrieval, HybridRagRetriever, splitIntoChunks } from "./rag.js";
 
 export const STAGES = Object.freeze([
   "task_parse",
@@ -51,8 +52,9 @@ function syntheticCandidates(market) {
   return [...staticCandidates, ...generated];
 }
 
-const DEFAULT_STATE = Object.freeze({ version: 2, tasks: {}, leads: {}, audit: [], runtime_config: {} });
+const DEFAULT_STATE = Object.freeze({ version: 3, tasks: {}, leads: {}, audit: [], runtime_config: {}, knowledge: {} });
 const CONNECTOR_CHANNELS = new Set(["email", "whatsapp", "crm"]);
+const KNOWLEDGE_TYPES = new Set(["product", "brand", "policy", "case", "market", "company"]);
 const CONNECTOR_SETTING_KEYS = new Set([
   "provider",
   "mode",
@@ -97,6 +99,22 @@ function normalizeDeploymentConfig(config = {}) {
     if (config[channel] !== undefined) result[channel] = normalizeConnectorSettings(config[channel]);
   }
   return result;
+}
+
+function normalizeKnowledge(value, field) {
+  const text = String(value || "").normalize("NFKC").trim();
+  if (!text) throw new Error(`knowledge ${field} 不能为空`);
+  if (text.length > (field === "content" ? 20000 : 300)) throw new Error(`knowledge ${field} 过长`);
+  if (/(-----BEGIN (?:RSA |OPENSSH )?PRIVATE KEY-----|sk-[A-Za-z0-9]{16,}|password\s*[:=]|api[_-]?key\s*[:=])/i.test(text)) throw new Error("knowledge 内容疑似包含凭证，已拒绝保存");
+  return text;
+}
+
+function knowledgeTokens(value) {
+  return new Set(String(value || "").normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || []);
+}
+
+function knowledgeId(type, title, source) {
+  return `know_${createHash("sha256").update(`${type}|${normalizeText(title)}|${normalizeText(source)}`).digest("hex").slice(0, 16)}`;
 }
 
 function normalizeText(value) {
@@ -264,8 +282,75 @@ export class ConnectorRegistry {
   }
 }
 
+export class KnowledgeBase {
+  constructor({ store, clock = now, retriever = new HybridRagRetriever() } = {}) {
+    if (!store) throw new TypeError("KnowledgeBase 需要 JsonStore");
+    this.store = store;
+    this.clock = clock;
+    this.retriever = retriever;
+  }
+
+  async upsert({ type, title, content, tags = [], source = "agent-guided", actor = "dsh-user" }) {
+    if (!KNOWLEDGE_TYPES.has(type)) throw new Error(`不支持的 knowledge type: ${type}`);
+    const normalizedTitle = normalizeKnowledge(title, "title");
+    const normalizedContent = normalizeKnowledge(content, "content");
+    const normalizedSource = normalizeKnowledge(source, "source");
+    const normalizedTags = [...new Set((Array.isArray(tags) ? tags : []).map((tag) => normalizeKnowledge(tag, "tag")).slice(0, 20))];
+    const id = knowledgeId(type, normalizedTitle, normalizedSource);
+    const embedding = this.retriever.embedder?.embed ? await this.retriever.embedder.embed(`${normalizedTitle}\n${normalizedContent}`) : undefined;
+    if (embedding !== undefined && (!Array.isArray(embedding) || !embedding.length || embedding.some((value) => !Number.isFinite(Number(value))))) {
+      throw new Error("RAG embedder 必须返回非空数字向量");
+    }
+    return this.store.mutate((state) => {
+      state.knowledge ||= {};
+      const existing = state.knowledge[id];
+      const record = {
+        knowledge_id: id,
+        type,
+        title: normalizedTitle,
+        content: normalizedContent,
+        tags: normalizedTags,
+        source: normalizedSource,
+        chunks: splitIntoChunks(normalizedContent),
+        version: (existing?.version || 0) + 1,
+        status: "approved",
+        updated_at: this.clock(),
+        updated_by: actor,
+      };
+      if (embedding !== undefined) record.embedding = embedding.map(Number);
+      state.knowledge[id] = record;
+      state.audit.push({ event_id: randomUUID(), at: this.clock(), task_id: null, stage: "knowledge", action: existing ? "knowledge.updated" : "knowledge.created", detail: { knowledge_id: id, type, source: normalizedSource, version: record.version, actor } });
+      return this.publicRecord(record);
+    });
+  }
+
+  async search(query, options = {}) {
+    const state = await this.store.read();
+    return this.searchState(state, query, options);
+  }
+
+  async searchState(state, query, options = {}) {
+    const types = (Array.isArray(options.types) ? options.types : []).filter((type) => KNOWLEDGE_TYPES.has(type));
+    return this.retriever.retrieve(Object.values(state.knowledge || {}), query, { ...options, types });
+  }
+
+  async evaluate({ queries, k = 5 } = {}) {
+    const state = await this.store.read();
+    return evaluateRetrieval({ retriever: this.retriever, records: Object.values(state.knowledge || {}), queries, k });
+  }
+
+  async list({ type } = {}) {
+    const state = await this.store.read();
+    return Object.values(state.knowledge || {}).filter((record) => !type || record.type === type).map((record) => this.publicRecord(record));
+  }
+
+  publicRecord(record) {
+    return { knowledge_id: record.knowledge_id, type: record.type, title: record.title, content: record.content, tags: record.tags, source: record.source, version: record.version, status: record.status, chunk_count: record.chunks?.length || 0, updated_at: record.updated_at, updated_by: record.updated_by };
+  }
+}
+
 export class SdrService {
-  constructor({ store, connectors = new ConnectorRegistry(), clock = now, deploymentConfig = {}, allowAgentConfig = false, allowAgentLiveConfig = false } = {}) {
+  constructor({ store, connectors = new ConnectorRegistry(), clock = now, deploymentConfig = {}, allowAgentConfig = false, allowAgentLiveConfig = false, knowledge = new KnowledgeBase({ store, clock }), allowAgentKnowledge = false } = {}) {
     if (!store) throw new TypeError("SdrService 需要 JsonStore");
     this.store = store;
     this.connectors = connectors;
@@ -273,6 +358,8 @@ export class SdrService {
     this.deploymentConfig = normalizeDeploymentConfig(deploymentConfig);
     this.allowAgentConfig = allowAgentConfig === true;
     this.allowAgentLiveConfig = allowAgentLiveConfig === true;
+    this.knowledge = knowledge;
+    this.allowAgentKnowledge = allowAgentKnowledge === true;
   }
 
   async createTask({ task, market = "", product = "", campaignVersion = "v2" }) {
@@ -304,6 +391,7 @@ export class SdrService {
         follow_ups: [],
         quotation_pack: [],
         report: null,
+        knowledge_refs: [],
         created_at: this.clock(),
         updated_at: this.clock(),
       };
@@ -321,25 +409,27 @@ export class SdrService {
         case "task_parse":
           item.plan = { market: item.market, product: item.product, target_count: item.target_count, dry_run: true };
           item.stage = "prospect_discovery";
-          result = { plan: item.plan };
+          result = { plan: item.plan, knowledge: await this.#attachKnowledge(state, item, `${item.product} ${item.market}`, ["product", "brand", "policy"]) };
           break;
         case "prospect_discovery":
           result = this.#discover(state, item);
           item.stage = "company_research";
           break;
         case "company_research":
+          await this.#attachKnowledge(state, item, `${item.product} ${item.market} ${item.prospects.map((lead) => lead.company).join(" ")}`, ["company", "product", "case"]);
           for (const lead of item.prospects) item.research[lead.canonical_lead_id] = { company: lead.company, evidence: [`synthetic public profile: ${lead.domain}`, "demo evidence only"] };
           item.stage = "prospect_scoring";
           result = { researched: item.prospects.length, dry_run: true };
           break;
         case "prospect_scoring":
+          await this.#attachKnowledge(state, item, `ICP ${item.product} ${item.market}`, ["policy", "market", "product"]);
           for (const [index, lead] of item.prospects.entries()) item.scores[lead.canonical_lead_id] = { score: Math.max(1, 20 - index), fit: "synthetic-fit", rationale: "market and product match" };
           item.stage = "email_draft";
           result = { scored: Object.keys(item.scores).length, dry_run: true };
           break;
         case "email_draft":
           this.#assertLeadOwnership(state, item);
-          result = await this.#drafts(item);
+          result = await this.#drafts(state, item);
           item.stage = "human_approval";
           break;
         case "human_approval":
@@ -351,6 +441,7 @@ export class SdrService {
           result = { follow_ups: item.follow_ups };
           break;
         case "quotation_pack":
+          await this.#attachKnowledge(state, item, `${item.product} ${item.market} quotation pricing certification`, ["product", "policy", "case"]);
           item.quotation_pack = [{ product: item.product, market: item.market, source: "synthetic catalogue", status: "draft-only" }];
           item.stage = "close";
           result = { quotation_pack: item.quotation_pack };
@@ -421,6 +512,23 @@ export class SdrService {
     return { task_id: taskId, stage: item.stage, drafts: item.drafts, pending: this.pending(item) };
   }
 
+  async knowledgeSearch(query, options = {}) {
+    return { query, entries: await this.knowledge.search(query, options) };
+  }
+
+  async knowledgeEvaluate(input = {}) {
+    return this.knowledge.evaluate(input);
+  }
+
+  async knowledgeUpsert(input) {
+    if (!this.allowAgentKnowledge) throw new Error("Agent 知识沉淀未放行；部署时设置 DSH_SDR_AGENT_KNOWLEDGE=1 后重载插件");
+    return this.knowledge.upsert({ ...input, actor: input.actor || "sdr-agent" });
+  }
+
+  async knowledgeList(options = {}) {
+    return { entries: await this.knowledge.list(options) };
+  }
+
   async auditLog(taskId) {
     const state = await this.store.read();
     this.#requireTask(state, taskId);
@@ -454,7 +562,7 @@ export class SdrService {
   }
 
   summary(item) {
-    return { task_id: item.task_id, task: item.task, stage: item.stage, stage_label: STAGE_LABELS[item.stage], market: item.market, product: item.product, prospects_count: item.prospects.length, drafts_count: item.drafts.length, pending_approvals: this.pending(item), follow_ups_count: item.follow_ups.length, quotation_count: item.quotation_pack.length, dry_run: true, updated_at: item.updated_at };
+    return { task_id: item.task_id, task: item.task, stage: item.stage, stage_label: STAGE_LABELS[item.stage], market: item.market, product: item.product, prospects_count: item.prospects.length, drafts_count: item.drafts.length, pending_approvals: this.pending(item), follow_ups_count: item.follow_ups.length, quotation_count: item.quotation_pack.length, knowledge_refs_count: item.knowledge_refs?.length || 0, dry_run: true, updated_at: item.updated_at };
   }
 
   #requireTask(state, taskId) {
@@ -483,11 +591,15 @@ export class SdrService {
     return { prospects: item.prospects, dedupe: { requested: item.target_count, selected: item.prospects.length, skipped_duplicates: Math.max(0, item.target_count - item.prospects.length) }, dry_run: true };
   }
 
-  async #drafts(item) {
+  async #drafts(state, item) {
     const connector = this.connectors.get("email");
+    const knowledgeHits = await this.knowledge.searchState(state, `${item.product} ${item.market}`, { types: ["product", "brand", "policy", "case"], limit: 4 });
+    this.#recordKnowledgeRefs(item, knowledgeHits);
+    const knowledgeExcerpt = knowledgeHits.slice(0, 2).map((hit) => `${hit.title}: ${hit.content.slice(0, 280)}`).join("\n");
     item.drafts = [];
     for (const [index, lead] of item.prospects.entries()) {
-      const draft = { email_id: `draft_${index + 1}_${lead.canonical_lead_id.slice(-6)}`, lead_id: lead.canonical_lead_id, company: lead.company, subject: `${item.product} catalogue for ${lead.company}`, body: `Hello ${lead.company} team,\n\nWe prepared a synthetic ${item.product} catalogue for the ${item.market} market. Would a short review be useful?\n\nBest regards,\nSDR demo team`, channel: "email", citations: [`synthetic public profile: ${lead.domain}`], guardrail: "passed" };
+      const body = `Hello ${lead.company} team,\n\nWe prepared a synthetic ${item.product} catalogue for the ${item.market} market. Would a short review be useful?${knowledgeExcerpt ? `\n\nRelevant company information:\n${knowledgeExcerpt}` : ""}\n\nBest regards,\nSDR demo team`;
+      const draft = { email_id: `draft_${index + 1}_${lead.canonical_lead_id.slice(-6)}`, lead_id: lead.canonical_lead_id, company: lead.company, subject: `${item.product} catalogue for ${lead.company}`, body, channel: "email", citations: [`synthetic public profile: ${lead.domain}`, ...knowledgeHits.map((hit) => `knowledge:${hit.knowledge_id}:${hit.title}`)], guardrail: "passed" };
       draft.draft_hash = draftHash(draft);
       const recipient = { domain: lead.domain };
       const validation = await connector.validateRecipient(recipient);
@@ -504,7 +616,7 @@ export class SdrService {
   }
 
   #report(item) {
-    return { task_id: item.task_id, status: "closed", market: item.market, product: item.product, prospects: item.prospects.map((lead) => ({ lead_id: lead.canonical_lead_id, company: lead.company, domain: lead.domain })), approved_drafts: Object.values(item.approvals).filter((approval) => approval.status === "approved").length, follow_up_count: item.follow_ups.length, quotation_pack_count: item.quotation_pack.length, external_delivery: "draft-only", dry_run: true };
+    return { task_id: item.task_id, status: "closed", market: item.market, product: item.product, prospects: item.prospects.map((lead) => ({ lead_id: lead.canonical_lead_id, company: lead.company, domain: lead.domain })), knowledge_refs: item.knowledge_refs || [], approved_drafts: Object.values(item.approvals).filter((approval) => approval.status === "approved").length, follow_up_count: item.follow_ups.length, quotation_pack_count: item.quotation_pack.length, external_delivery: "draft-only", dry_run: true };
   }
 
   #assertLeadOwnership(state, item) {
@@ -514,6 +626,18 @@ export class SdrService {
         throw new Error(`客户去重校验失败: ${lead.company}`);
       }
     }
+  }
+
+  async #attachKnowledge(state, item, query, types) {
+    const hits = await this.knowledge.searchState(state, query, { types, limit: 6 });
+    this.#recordKnowledgeRefs(item, hits);
+    return hits.map((hit) => ({ knowledge_id: hit.knowledge_id, type: hit.type, title: hit.title, source: hit.source, relevance: hit.relevance }));
+  }
+
+  #recordKnowledgeRefs(item, hits) {
+    const existing = new Set(item.knowledge_refs || []);
+    for (const hit of hits) existing.add(hit.knowledge_id);
+    item.knowledge_refs = [...existing];
   }
 
   #effectiveConnectorConfig(state, channel) {

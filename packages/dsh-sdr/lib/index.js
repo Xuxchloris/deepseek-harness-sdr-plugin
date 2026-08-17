@@ -80,6 +80,56 @@ const schemas = {
     },
     required: ["channel", "settings"],
   },
+  knowledgeSearch: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      query: { type: "string", description: "要检索的产品、品牌、市场或规则关键词" },
+      types: { type: "array", items: { type: "string", enum: ["product", "brand", "policy", "case", "market", "company"] } },
+      limit: { type: "integer", minimum: 1, maximum: 20 },
+    },
+    required: ["query"],
+  },
+  knowledgeUpsert: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      type: { type: "string", enum: ["product", "brand", "policy", "case", "market", "company"] },
+      title: { type: "string", description: "知识条目标题" },
+      content: { type: "string", description: "已由用户确认的企业知识内容，不要写入密码或 API key" },
+      tags: { type: "array", items: { type: "string" } },
+      source: { type: "string", description: "来源，例如 user-guided、catalogue.pdf、crm" },
+    },
+    required: ["type", "title", "content", "source"],
+  },
+  knowledgeList: {
+    type: "object",
+    additionalProperties: false,
+    properties: { type: { type: "string", enum: ["product", "brand", "policy", "case", "market", "company"] } },
+  },
+  knowledgeEvaluate: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      k: { type: "integer", minimum: 1, maximum: 20, description: "评测前 K 个结果" },
+      queries: {
+        type: "array",
+        minItems: 1,
+        maxItems: 100,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            text: { type: "string" },
+            types: { type: "array", items: { type: "string", enum: ["product", "brand", "policy", "case", "market", "company"] } },
+            relevant_knowledge_ids: { type: "array", items: { type: "string" } },
+          },
+          required: ["text", "relevant_knowledge_ids"],
+        },
+      },
+    },
+    required: ["queries"],
+  },
 };
 
 function deploymentConfigFromEnv() {
@@ -100,9 +150,11 @@ function registerNativeSdr(ctx, config = {}) {
   const service = new SdrService({
     store: new JsonStore(config.dataFile || defaultStorePath()),
     connectors: new ConnectorRegistry(),
+    knowledge: config.knowledge,
     deploymentConfig: config.deploymentConfig || deploymentConfigFromEnv(),
     allowAgentConfig: config.allowAgentConfig === true || process.env.DSH_SDR_AGENT_CONFIG === "1",
     allowAgentLiveConfig: config.allowAgentLiveConfig === true || process.env.DSH_SDR_AGENT_LIVE_CONFIG === "1",
+    allowAgentKnowledge: config.allowAgentKnowledge === true || process.env.DSH_SDR_AGENT_KNOWLEDGE === "1",
   });
 
   const disposers = [];
@@ -113,6 +165,58 @@ function registerNativeSdr(ctx, config = {}) {
     async execute(args) {
       try {
         return await service.createTask({ task: args.task, market: args.market, product: args.product, campaignVersion: args.campaign_version });
+      } catch (error) {
+        return { error: String(error.message || error) };
+      }
+    },
+  }));
+
+  disposers.push(registerTool(ctx, {
+    name: "sdr_knowledge_search",
+    description: "检索已批准的企业知识库。任务流程会自动检索产品、品牌、政策、案例和市场资料，并在草稿/结案中记录引用。",
+    parameters: schemas.knowledgeSearch,
+    async execute(args) {
+      try {
+        return await service.knowledgeSearch(args.query, { types: args.types, limit: args.limit });
+      } catch (error) {
+        return { error: String(error.message || error) };
+      }
+    },
+  }));
+
+  disposers.push(registerTool(ctx, {
+    name: "sdr_knowledge_upsert",
+    description: "在部署策略显式开启 DSH_SDR_AGENT_KNOWLEDGE=1 后，将用户引导确认的产品、品牌、规则、案例或市场信息持久化。内容带来源、版本和审计；凭证内容会被拒绝。",
+    parameters: schemas.knowledgeUpsert,
+    async execute(args) {
+      try {
+        return await service.knowledgeUpsert(args);
+      } catch (error) {
+        return { error: String(error.message || error) };
+      }
+    },
+  }));
+
+  disposers.push(registerTool(ctx, {
+    name: "sdr_knowledge_list",
+    description: "列出持久化企业知识条目摘要。",
+    parameters: schemas.knowledgeList,
+    async execute(args) {
+      try {
+        return await service.knowledgeList(args);
+      } catch (error) {
+        return { error: String(error.message || error) };
+      }
+    },
+  }));
+
+  disposers.push(registerTool(ctx, {
+    name: "sdr_knowledge_evaluate",
+    description: "用带有标准答案的查询集评测知识库召回质量，返回 Recall@K 和 MRR；用于上线前回归，不修改业务状态。",
+    parameters: schemas.knowledgeEvaluate,
+    async execute(args) {
+      try {
+        return await service.knowledgeEvaluate(args);
       } catch (error) {
         return { error: String(error.message || error) };
       }
@@ -249,3 +353,5 @@ export async function apply(ctx, config = {}) {
 }
 
 export { ConnectorRegistry, JsonStore, SdrService, defaultStorePath, installManagedPreset, targetPreset };
+export { HybridRagRetriever, evaluateRetrieval, splitIntoChunks } from "./rag.js";
+export { POSTGRES_RAG_SCHEMA, PostgresKnowledgeRepository } from "./postgres-rag.js";

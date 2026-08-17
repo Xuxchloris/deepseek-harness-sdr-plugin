@@ -23,6 +23,10 @@ test("DSH native tools all publish object JSON schemas", async () => {
   const dispose = await apply(context, { role: "agent", dataFile: join(directory, "state.json") });
   assert.deepEqual(registered.map((item) => item.name), [
     "sdr_create_task",
+    "sdr_knowledge_search",
+    "sdr_knowledge_upsert",
+    "sdr_knowledge_list",
+    "sdr_knowledge_evaluate",
     "sdr_next_step",
     "sdr_review_drafts",
     "sdr_continue_after_approval",
