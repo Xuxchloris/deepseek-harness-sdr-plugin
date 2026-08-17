@@ -55,6 +55,7 @@ mcp = FastMCP(
 
 
 def _summary(task: SDRTask) -> dict:
+    draft_hash = hashlib.sha256(f"{product} catalogue for {company}\n{body}".encode()).hexdigest()
     return {
         "task_id": task.task_id,
         "task": task.task,
@@ -115,7 +116,7 @@ def _stable_draft(task: SDRTask, company: str, index: int) -> dict:
         "citations": evidence,
         "case_notes": [n["title"] for n in load_case_notes()[:2]],
         "guardrail": "passed",
-        "draft_hash": hashlib.sha256(f"{company}\n{body}".encode()).hexdigest(),
+        "draft_hash": draft_hash,
     }
 
 
