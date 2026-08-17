@@ -6,3 +6,6 @@ __pycache__/
 data/exports/*
 !data/exports/.gitkeep
 *.log
+.npm-cache/
+.pnpm-store/
+.tmp-dsh-home/
