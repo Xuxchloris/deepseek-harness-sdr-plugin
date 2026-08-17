@@ -16,7 +16,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/ai-sdr.git",
+    "url": "https://github.com/Xuxchloris/deepseek-harness-sdr-plugin.git",
     "directory": "packages/dsh-sdr"
   },
   "engines": {
