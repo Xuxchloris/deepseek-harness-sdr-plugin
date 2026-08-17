@@ -37,3 +37,35 @@ test("DSH native tools all publish object JSON schemas", async () => {
   }
   dispose();
 });
+
+test("审批询问透传 agent-owned 执行身份", async () => {
+  const registered = [];
+  let asked;
+  const directory = await mkdtemp(join(tmpdir(), "dsh-sdr-approval-"));
+  const context = {
+    tools: {
+      register(definition) {
+        registered.push(definition);
+        return () => undefined;
+      },
+      guard() {
+        return () => undefined;
+      },
+    },
+    userQuestions: {
+      ask: async (request) => {
+        asked = request;
+        return { answers: [{ id: "drafts", selected: [] }] };
+      },
+    },
+  };
+  const dispose = await apply(context, { role: "agent", dataFile: join(directory, "state.json") });
+  const create = registered.find((item) => item.name === "sdr_create_task");
+  const next = registered.find((item) => item.name === "sdr_next_step");
+  const review = registered.find((item) => item.name === "sdr_review_drafts");
+  const created = await create.execute({ task: "开发 1 个美国客户", campaign_version: "agent-owned" });
+  for (let index = 0; index < 5; index += 1) await next.execute({ task_id: created.task_id });
+  await review.execute({ task_id: created.task_id }, { agent: { id: "agent-test" }, signal: new AbortController().signal });
+  assert.deepEqual(asked.agent, { id: "agent-test" });
+  dispose();
+});

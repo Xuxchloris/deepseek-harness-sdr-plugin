@@ -122,6 +122,7 @@ function registerNativeSdr(ctx, config = {}) {
         const detail = pending.drafts.map((draft) => `【${draft.email_id}】${draft.company}\n${draft.subject}\n${draft.body}`).join("\n\n");
         const answer = await ctx.userQuestions.ask({
           questions: [{ id: "drafts", header: "SDR 开发信审批", question: "选择允许进入下一阶段的开发信；未选择的草稿会继续保持待审批。", detail, options, multiSelect: true }],
+          ...(exec?.agent !== undefined ? { agent: exec.agent } : {}),
           signal: exec?.signal,
         });
         const selected = answer?.answers?.find((item) => item.id === "drafts")?.selected || [];
