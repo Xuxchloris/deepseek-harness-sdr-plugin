@@ -90,7 +90,12 @@ function registerNativeGate(ctx, config = {}) {
     name: "sdr_review_drafts",
     description: "在 SDR 人工审批卡点展示开发信草稿，并等待人类选择要批准的草稿。未获人类选择时任务保持暂停。",
     parameters: {
-      task_id: { type: "string", required: true, description: "待审批的 SDR task_id。" },
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        task_id: { type: "string", description: "待审批的 SDR task_id。" },
+      },
+      required: ["task_id"],
     },
     output: output(),
     async execute(args, exec) {
@@ -146,7 +151,12 @@ function registerNativeGate(ctx, config = {}) {
     name: "sdr_audit_log",
     description: "读取 SDR 任务的完整工具调用审计日志，用于回放和结案核验。",
     parameters: {
-      task_id: { type: "string", required: true, description: "SDR task_id。" },
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        task_id: { type: "string", description: "SDR task_id。" },
+      },
+      required: ["task_id"],
     },
     output: output(),
     async execute(args, exec) {
