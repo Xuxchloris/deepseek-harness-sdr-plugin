@@ -1,0 +1,51 @@
+# AI 员工定义：外贸获客 SDR
+# 流程顺序对应 LangGraph 状态机节点；tools 为可用工具白名单；approval 为审批节点配置
+
+employee:
+  name: ai-sdr
+  role: Sales Development Representative
+
+workflow:
+  nodes:
+    - id: task_parse
+      label: 任务解析
+      tools: []
+    - id: prospect_discovery
+      label: 客户发现
+      tools: [collect_prospects, dedup]
+    - id: company_research
+      label: 公司背调
+      tools: [fetch_website, extract_evidence]
+    - id: prospect_scoring
+      label: 客户评分
+      tools: [score_rubric]
+    - id: email_draft
+      label: 开发信草稿
+      tools: [rag_retrieve, generate_email]
+    - id: human_approval
+      label: 人工审批
+      approval: true
+    - id: follow_up_plan
+      label: 跟进计划
+      tools: [plan_followups]
+    - id: quotation_pack
+      label: 报价素材
+      tools: [build_quotation_pack]
+    - id: close
+      label: 结案入库
+
+approvals:
+  email_send:           # 发送邮件前必须审批
+    level: manager
+    timeout_hours: 24
+    escalation_after_hours: 48
+  draft_publish:        # 草稿对外提交前必须审批
+    level: manager
+    timeout_hours: 12
+    escalation_after_hours: 24
+
+guardrails:
+  no_auto_send_email: true
+  no_fabricate_facts: true
+  source_required_per_claim: true
+  idempotency_keys: [prospect_id, task_id]

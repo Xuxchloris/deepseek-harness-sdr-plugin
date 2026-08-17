@@ -1,0 +1,14 @@
+services:
+  api:
+    build: .
+    env_file: .env
+    command: uvicorn app.api.main:app --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  bot:
+    build: .
+    env_file: .env
+    command: python -m app.feishu
+    restart: unless-stopped

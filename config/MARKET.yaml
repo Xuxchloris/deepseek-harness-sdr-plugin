@@ -1,0 +1,11 @@
+markets:
+  - code: US
+    name: United States
+    languages: [en]
+    target_channels: [Amazon US, Walmart, Independent Distributors]
+    keywords: [outdoor, camping, power station, portable]
+  - code: EU
+    name: European Union
+    languages: [en, de, fr]
+    target_channels: [Amazon EU, Specialty Retail]
+    keywords: [outdoor, camping, solar]

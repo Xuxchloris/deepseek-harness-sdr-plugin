@@ -1,0 +1,19 @@
+products:
+  - sku: OUT-001
+    name: Portable Power Station 300W
+    moq: 100
+    price_usd: 89.0
+    certifications: [CE, FCC]
+    lead_time_days: 30
+  - sku: OUT-002
+    name: Foldable Camping Table
+    moq: 200
+    price_usd: 35.5
+    certifications: [CE]
+    lead_time_days: 25
+  - sku: OUT-003
+    name: Solar Camping Lantern
+    moq: 300
+    price_usd: 12.8
+    certifications: [CE, RoHS]
+    lead_time_days: 20

@@ -1,0 +1,10 @@
+tone:
+  default:
+    formality: professional_but_friendly
+    opening: greeting_with_company_reference
+    structure: [introduction, relevance_evidence, product_offer, cta, ps]
+    length_words: 120_180
+  follow_up:
+    formality: friendly
+    structure: [reference_previous, value_reminder, alternative_offer, cta]
+    length_words: 80_120
