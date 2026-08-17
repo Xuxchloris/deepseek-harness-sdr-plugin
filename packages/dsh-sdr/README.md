@@ -51,11 +51,28 @@ SdrService (Node.js)
 
 默认状态文件为 `%USERPROFILE%\\.dsh\\.dsh-sdr\\state.json`，也可以设置 `DSH_SDR_DATA_FILE` 指定路径。状态文件只保存本地合成演示数据，不需要凭证。未来可以把 `JsonStore` 换成 SQLite/PostgreSQL adapter，把 `ConnectorRegistry` 中的 dry-run connector 换成 SMTP/SES、WhatsApp Business API、HubSpot、Salesforce 或飞书实现，SOP 和审批工具接口不变。
 
+## 部署配置与 Agent 覆盖
+
+部署前的非敏感 connector 基线可以通过 `DSH_SDR_DEPLOYMENT_CONFIG_JSON` 注入，例如：
+
+```powershell
+$env:DSH_SDR_DEPLOYMENT_CONFIG_JSON = '{"email":{"provider":"smtp","host":"smtp.example.com","port":587,"secure":true,"from":"sdr@example.com","password_ref":"DSH_SMTP_PASSWORD"}}'
+```
+
+如需让 Agent 在部署过程中补充 host、port、provider、发件人或凭证引用名，再显式开启：
+
+```powershell
+$env:DSH_SDR_AGENT_CONFIG = '1'
+```
+
+开启后 Agent 可以调用 `sdr_configure_connector` 写入运行时覆盖；部署基线不会被覆盖，可以通过 `sdr_connector_status` 同时查看基线、覆盖和合并结果。密码、API key、token 等敏感值不能通过工具写入，Agent 只能填写引用名。当前内置 connector 仍然是 dry-run；`DSH_SDR_AGENT_LIVE_CONFIG=1` 只代表允许保存 `mode=live` 配置，不会凭空启用真实发送。
+
 ## 结构性安全约束
 
 - 业务工具不暴露任意阶段执行参数，阶段顺序由服务端状态机校验。
 - 没有人工审批凭证，`sdr_continue_after_approval` 必须失败；审批凭证绑定草稿哈希，草稿被修改后自动失效。
 - 没有 `send_email` 或通用 `send` 工具；默认 connector 的 `send()` 始终返回 `blocked-dry-run`。
+- Agent 配置默认关闭；打开 `DSH_SDR_AGENT_CONFIG=1` 后也只能写白名单覆盖，部署前基线和敏感凭证仍由部署环境掌控。
 - 客户发现时按 canonical domain、邮箱、电话和市场+标准化公司名去重；相同活动版本创建任务幂等复用。
 - 每个工具动作写入带时间、任务 ID、阶段和结果摘要的审计事件，`sdr_audit_log` 可回放。
 
