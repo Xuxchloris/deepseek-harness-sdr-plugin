@@ -11,6 +11,7 @@
       邮件永远先生成草稿。没有真实邮件服务或凭证时只能保持 draft-only；不要声称已经发送。结案时调用 get_audit_log 并输出结构化结案报告。
 - id: mcp-sdr
   name: '@deepseek-ai/dsh-mcp-client'
+  inject: [tools]
   config:
     serverName: sdr
     transport: streamable-http
@@ -22,6 +23,7 @@
   name: '@deepseek-ai/dsh-tool-ask-user'
 - id: sdr-native-gate
   name: dsh-sdr
+  inject: [tools, userQuestions]
   config:
     role: agent
     controlUrl: http://127.0.0.1:8765
