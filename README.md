@@ -34,23 +34,21 @@ app/feishu/  飞书机器人接入（占位）
 
 ## DeepSeek Harness 插件
 
-本仓库包含可安装的 `dsh-sdr` bundle，首个兼容目标是 DSH `0.1.0-rc.6`。它把 DSH 作为外层 Agent loop，把本项目 Python 代码作为 MCP 业务服务，保留原有 FastAPI、飞书和 Pydantic AI 用法。
+本仓库包含可安装的 `dsh-sdr` bundle，首个兼容目标是 DSH `0.1.0-rc.6`。当前版本将 DSH 作为外层 Agent loop，并在 bundle 内使用 Node.js 原生业务内核；原项目 Python 代码完整保留，继续服务于 FastAPI、飞书和 Pydantic AI 路径。
 
 ```powershell
 dsh plugin --profile web add .\packages\dsh-sdr
-$env:DSH_SDR_DRY_RUN = '1'
-python -m app.mcp.server --transport streamable-http
 dsh web
 ```
 
 bundle 安装器管理的 preset 目录是 `$DSH_HOME/.agent-presets/sdr`（Windows 默认 `%USERPROFILE%\\.dsh\\.agent-presets\\sdr`）。重启后新建会话，在模式菜单选择「SDR 数字员工」。安装器不会覆盖没有 `.dsh-sdr-managed.json` 标记的同名用户 preset。
 
-邮件流程是结构性门控：公共 MCP 不提供批准或发送工具；原生审批工具必须等待人类选择；Python `gates.py` 绑定草稿哈希并在未批准或内容变化时拒绝推进。默认无凭证 dry-run，发送出口只产生 draft-only 队列状态。
+邮件流程是结构性门控：原生工具不提供模型可调用的批准或发送出口；审批工具必须等待人类选择；Node 服务绑定草稿哈希并在未批准或内容变化时拒绝推进。默认 Email、WhatsApp、CRM connector 全部 dry-run，发送出口只产生 draft-only / blocked 状态，不占用本地固定端口。
 
 端到端离线演示：
 
 ```powershell
-python scripts/demo_dsh_sdr.py
+node scripts/demo_dsh_sdr.mjs
 ```
 
 迁移边界、rc.6 API 风险和当前完成度见 [`docs/迁移方案.md`](docs/迁移方案.md)，插件安装说明见 [`packages/dsh-sdr/README.md`](packages/dsh-sdr/README.md)。`app/` 延续原 ai-sdr；`export_skills` 是历史技能导出项目，不是本 bundle 的运行时依赖。
