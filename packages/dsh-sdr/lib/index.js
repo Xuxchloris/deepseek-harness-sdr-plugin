@@ -2,8 +2,6 @@ import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
-import { defineTool } from "@deepseek-ai/dsh-tools";
-import "@deepseek-ai/dsh-user-questions";
 
 const PACKAGE_NAME = "dsh-sdr";
 const VERSION = "0.1.0";
@@ -81,7 +79,7 @@ function registerNativeGate(ctx, config = {}) {
     return undefined;
   });
 
-  const disposeReview = ctx.tools.register(defineTool({
+  const disposeReview = ctx.tools.register({
     name: "sdr_review_drafts",
     description: "在 SDR 人工审批卡点展示开发信草稿，并等待人类选择要批准的草稿。未获人类选择时任务保持暂停。",
     parameters: {
@@ -135,9 +133,9 @@ function registerNativeGate(ctx, config = {}) {
         requires_all_before_advance: true,
       };
     },
-  }));
+  });
 
-  const disposeAudit = ctx.tools.register(defineTool({
+  const disposeAudit = ctx.tools.register({
     name: "sdr_audit_log",
     description: "读取 SDR 任务的完整工具调用审计日志，用于回放和结案核验。",
     parameters: {
@@ -147,7 +145,7 @@ function registerNativeGate(ctx, config = {}) {
     async execute(args, exec) {
       return controlFetch(`${controlUrl}/control/audit?task_id=${encodeURIComponent(args.task_id)}`, undefined, exec.signal);
     },
-  }));
+  });
 
   return () => {
     disposeReview();
