@@ -1,0 +1,32 @@
+{
+  "name": "dsh-sdr",
+  "version": "0.1.0",
+  "description": "外贸获客 SDR 数字员工的 DeepSeek Harness bundle",
+  "type": "module",
+  "main": "lib/index.js",
+  "files": [
+    "lib/index.js",
+    "cordis.patch.yml",
+    "presets/sdr/agent.cordis.yml",
+    "presets/sdr/preset.yml",
+    "README.md"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/ai-sdr.git",
+    "directory": "packages/dsh-sdr"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-user-questions": "^0.1.0-rc.6"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

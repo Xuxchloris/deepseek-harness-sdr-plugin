@@ -1,0 +1,7 @@
+# dsh-sdr is a bundle layer for DSH 0.1.0-rc.6.
+# The runtime row installs the managed preset into DSH_HOME/.agent-presets/sdr.
+- insert:
+    - id: dsh-sdr-installer
+      name: dsh-sdr
+      config:
+        role: installer

@@ -270,6 +270,16 @@ async def control_pending(request: Request) -> JSONResponse:
     return JSONResponse({"task_id": task_id, "stage": task.stage, "drafts": _pending(task)})
 
 
+@mcp.custom_route("/control/audit", methods=["GET"], include_in_schema=False)
+async def control_audit(request: Request) -> JSONResponse:
+    """Private loopback audit projection for the native DSH audit tool."""
+    task_id = request.query_params.get("task_id", "")
+    task = REPO.get(task_id)
+    if task is None:
+        return JSONResponse({"error": "task not found"}, status_code=404)
+    return JSONResponse({"task_id": task_id, "entries": task.audit_log, "count": len(task.audit_log)})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="dsh-sdr MCP server")
     parser.add_argument("--transport", choices=("stdio", "streamable-http"), default="stdio")

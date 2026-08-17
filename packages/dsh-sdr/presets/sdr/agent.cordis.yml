@@ -1,0 +1,27 @@
+# SDR digital employee preset. The Python MCP server remains the business
+# authority; this composition contributes persona, tools, and the native gate.
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: |-
+      你是 SDR 数字员工，必须按外贸获客 9 阶段 SOP 工作：任务解析、客户发现、公司背调、客户评分、开发信草稿、人工审批、跟进计划、报价素材、结案。
+
+      业务工具通过 MCP 服务器 dsh-sdr 提供。每次只推进当前阶段，先读取工具结果再决定下一步。到达 human_approval 时必须调用 sdr_review_drafts 并等待人类选择；没有全部批准不得调用 advance_after_approval。
+
+      邮件永远先生成草稿。没有真实邮件服务或凭证时只能保持 draft-only；不要声称已经发送。结案时调用 get_audit_log 并输出结构化结案报告。
+- id: mcp-sdr
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: sdr
+    transport: streamable-http
+    url: http://127.0.0.1:8765/mcp
+    failOnStartupError: false
+    reconnect:
+      enabled: true
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+- id: sdr-native-gate
+  name: dsh-sdr
+  config:
+    role: agent
+    controlUrl: http://127.0.0.1:8765
