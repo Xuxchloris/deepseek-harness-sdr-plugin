@@ -14,6 +14,8 @@ import re
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from app.state import SDRTask, STAGES
 from app.storage.repository import TaskRepository
@@ -230,6 +232,41 @@ def get_audit_log(task_id: str) -> dict:
         "entries": task.audit_log,
         "count": len(task.audit_log),
     }
+
+
+@mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
+async def health(_: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok", "service": "dsh-sdr", "dry_run": DRY_RUN})
+
+
+@mcp.custom_route("/control/approve", methods=["POST"], include_in_schema=False)
+async def control_approve(request: Request) -> JSONResponse:
+    """Private loopback control path used only by the native DSH approval tool."""
+    try:
+        body = await request.json()
+        task = REPO.get(str(body.get("task_id", "")))
+        if task is None:
+            return JSONResponse({"error": "task not found"}, status_code=404)
+        result = gates.approve_email(
+            task,
+            str(body.get("email_id", "")),
+            approver=str(body.get("approver", "dsh-user")),
+            draft_hash=body.get("draft_hash"),
+            source=str(body.get("source", "dsh")),
+        )
+        REPO.save(task)
+        return JSONResponse({"result": result, "task": _summary(task)})
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+@mcp.custom_route("/control/pending", methods=["GET"], include_in_schema=False)
+async def control_pending(request: Request) -> JSONResponse:
+    task_id = request.query_params.get("task_id", "")
+    task = REPO.get(task_id)
+    if task is None:
+        return JSONResponse({"error": "task not found"}, status_code=404)
+    return JSONResponse({"task_id": task_id, "stage": task.stage, "drafts": _pending(task)})
 
 
 def main() -> None:
