@@ -30,6 +30,7 @@ test("DSH native tools all publish object JSON schemas", async () => {
     "sdr_get_report",
     "sdr_audit_log",
     "sdr_connector_status",
+    "sdr_configure_connector",
   ]);
   for (const item of registered) {
     assert.equal(item.parameters.type, "object", item.name);

@@ -71,7 +71,26 @@ const schemas = {
     properties: { task_id: { type: "string", description: "SDR 任务 ID" } },
     required: ["task_id"],
   },
+  connectorConfig: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      channel: { type: "string", enum: ["email", "whatsapp", "crm"], description: "要配置的 connector" },
+      settings: { type: "object", additionalProperties: true, description: "非敏感连接参数和凭证引用名；不能填写密码或 API key 值" },
+    },
+    required: ["channel", "settings"],
+  },
 };
+
+function deploymentConfigFromEnv() {
+  const raw = process.env.DSH_SDR_DEPLOYMENT_CONFIG_JSON;
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`DSH_SDR_DEPLOYMENT_CONFIG_JSON 不是合法 JSON: ${String(error.message || error)}`);
+  }
+}
 
 function registerTool(ctx, definition) {
   return ctx.tools.register({ ...definition, output: objectOutput });
@@ -81,6 +100,9 @@ function registerNativeSdr(ctx, config = {}) {
   const service = new SdrService({
     store: new JsonStore(config.dataFile || defaultStorePath()),
     connectors: new ConnectorRegistry(),
+    deploymentConfig: config.deploymentConfig || deploymentConfigFromEnv(),
+    allowAgentConfig: config.allowAgentConfig === true || process.env.DSH_SDR_AGENT_CONFIG === "1",
+    allowAgentLiveConfig: config.allowAgentLiveConfig === true || process.env.DSH_SDR_AGENT_LIVE_CONFIG === "1",
   });
 
   const disposers = [];
@@ -187,10 +209,23 @@ function registerNativeSdr(ctx, config = {}) {
 
   disposers.push(registerTool(ctx, {
     name: "sdr_connector_status",
-    description: "查看 Email、WhatsApp、CRM connector 的注册状态；默认全部 dry-run，不会发送真实消息。",
+    description: "查看 Email、WhatsApp、CRM connector 的注册状态、部署基线和 Agent 运行时覆盖；敏感值不会返回。",
     parameters: { type: "object", additionalProperties: false, properties: {} },
     async execute() {
       return service.connectorStatus();
+    },
+  }));
+
+  disposers.push(registerTool(ctx, {
+    name: "sdr_configure_connector",
+    description: "在部署策略显式放行时配置 connector 的非敏感参数。部署配置保留为基线；Agent 只能写入白名单字段或凭证引用名，不能写入密码、token、API key 值。",
+    parameters: schemas.connectorConfig,
+    async execute(args) {
+      try {
+        return await service.configureConnector({ channel: args.channel, settings: args.settings, actor: "sdr-agent" });
+      } catch (error) {
+        return { error: String(error.message || error) };
+      }
     },
   }));
 

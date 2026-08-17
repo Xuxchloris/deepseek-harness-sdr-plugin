@@ -51,10 +51,52 @@ function syntheticCandidates(market) {
   return [...staticCandidates, ...generated];
 }
 
-const DEFAULT_STATE = Object.freeze({ version: 2, tasks: {}, leads: {}, audit: [] });
+const DEFAULT_STATE = Object.freeze({ version: 2, tasks: {}, leads: {}, audit: [], runtime_config: {} });
+const CONNECTOR_CHANNELS = new Set(["email", "whatsapp", "crm"]);
+const CONNECTOR_SETTING_KEYS = new Set([
+  "provider",
+  "mode",
+  "enabled",
+  "from",
+  "base_url",
+  "host",
+  "port",
+  "secure",
+  "phone_number_id",
+  "tenant",
+  "username_ref",
+  "password_ref",
+  "api_key_ref",
+  "credential_ref",
+]);
+const SECRET_SETTING_PATTERN = /(password|secret|token|api[_-]?key|private[_-]?key|credential_value)/i;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function normalizeConnectorSettings(settings = {}) {
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) throw new Error("connector settings 必须是对象");
+  const normalized = {};
+  for (const [key, value] of Object.entries(settings)) {
+    if (SECRET_SETTING_PATTERN.test(key) && !key.endsWith("_ref")) throw new Error(`禁止通过 Agent 写入敏感字段: ${key}`);
+    if (!CONNECTOR_SETTING_KEYS.has(key)) throw new Error(`不允许的 connector 配置字段: ${key}`);
+    if (typeof value === "string" && value.length > 512) throw new Error(`connector 配置字段过长: ${key}`);
+    if (!["string", "number", "boolean"].includes(typeof value)) throw new Error(`connector 配置字段类型不支持: ${key}`);
+    normalized[key] = value;
+  }
+  if (normalized.mode !== undefined && !["dry-run", "live"].includes(normalized.mode)) throw new Error("connector mode 只能是 dry-run 或 live");
+  if (normalized.port !== undefined && (!Number.isInteger(normalized.port) || normalized.port < 1 || normalized.port > 65535)) throw new Error("connector port 必须是 1-65535 的整数");
+  return normalized;
+}
+
+function normalizeDeploymentConfig(config = {}) {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return {};
+  const result = {};
+  for (const channel of CONNECTOR_CHANNELS) {
+    if (config[channel] !== undefined) result[channel] = normalizeConnectorSettings(config[channel]);
+  }
+  return result;
 }
 
 function normalizeText(value) {
@@ -223,11 +265,14 @@ export class ConnectorRegistry {
 }
 
 export class SdrService {
-  constructor({ store, connectors = new ConnectorRegistry(), clock = now } = {}) {
+  constructor({ store, connectors = new ConnectorRegistry(), clock = now, deploymentConfig = {}, allowAgentConfig = false, allowAgentLiveConfig = false } = {}) {
     if (!store) throw new TypeError("SdrService 需要 JsonStore");
     this.store = store;
     this.connectors = connectors;
     this.clock = clock;
+    this.deploymentConfig = normalizeDeploymentConfig(deploymentConfig);
+    this.allowAgentConfig = allowAgentConfig === true;
+    this.allowAgentLiveConfig = allowAgentLiveConfig === true;
   }
 
   async createTask({ task, market = "", product = "", campaignVersion = "v2" }) {
@@ -382,8 +427,26 @@ export class SdrService {
     return { task_id: taskId, entries: state.audit.filter((entry) => entry.task_id === taskId), count: state.audit.filter((entry) => entry.task_id === taskId).length };
   }
 
+  async configureConnector({ channel, settings, actor = "sdr-agent" }) {
+    if (!this.allowAgentConfig) throw new Error("Agent connector 配置未放行；部署时设置 DSH_SDR_AGENT_CONFIG=1 后重载插件");
+    if (!CONNECTOR_CHANNELS.has(channel)) throw new Error(`不支持的 connector: ${channel}`);
+    const patch = normalizeConnectorSettings(settings);
+    if (patch.mode === "live" && !this.allowAgentLiveConfig) throw new Error("Agent 只能配置 dry-run；如需 live，部署时额外设置 DSH_SDR_AGENT_LIVE_CONFIG=1");
+    return this.store.mutate((state) => {
+      state.runtime_config ||= {};
+      state.runtime_config[channel] = { ...(state.runtime_config[channel] || {}), ...patch, updated_at: this.clock(), updated_by: actor };
+      state.audit.push({ event_id: randomUUID(), at: this.clock(), task_id: null, stage: "deployment", action: "connector.configured", detail: { channel, keys: Object.keys(patch), actor } });
+      return { channel, applied_keys: Object.keys(patch), effective: this.#effectiveConnectorConfig(state, channel), deployment_config_preserved: true, secret_values_hidden: true };
+    });
+  }
+
   async connectorStatus() {
-    return { connectors: this.connectors.list(), policy: "真实发送必须由部署方显式注册非 dry-run connector；默认永远不外发" };
+    const state = await this.store.read();
+    return {
+      connectors: this.connectors.list().map((connector) => ({ ...connector, deployment_config: this.#redactConfig(this.deploymentConfig[connector.channel] || {}), runtime_override: this.#redactConfig(state.runtime_config?.[connector.channel] || {}), effective_config: this.#redactConfig(this.#effectiveConnectorConfig(state, connector.channel)) })),
+      agent_config: { enabled: this.allowAgentConfig, live_mode_enabled: this.allowAgentLiveConfig },
+      policy: "部署配置是基线，Agent 只能在显式开关开启后写入白名单覆盖；密码、API key 和 token 值永远不进入工具参数或审计日志",
+    };
   }
 
   pending(item) {
@@ -451,6 +514,14 @@ export class SdrService {
         throw new Error(`客户去重校验失败: ${lead.company}`);
       }
     }
+  }
+
+  #effectiveConnectorConfig(state, channel) {
+    return { ...(this.deploymentConfig[channel] || {}), ...(state.runtime_config?.[channel] || {}) };
+  }
+
+  #redactConfig(config) {
+    return Object.fromEntries(Object.entries(config).filter(([key]) => !SECRET_SETTING_PATTERN.test(key) || key.endsWith("_ref")));
   }
 }
 

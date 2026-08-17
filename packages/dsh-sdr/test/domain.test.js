@@ -79,3 +79,24 @@ test("connector registry 支持后续 WhatsApp/CRM 实现替换", async () => {
   assert.equal(registry.get("whatsapp"), custom);
   assert.throws(() => registry.get("email"), /未注册/);
 });
+
+test("Agent 配置需要部署开关，并保留部署基线且拒绝敏感值", async () => {
+  const { service: blocked } = await service();
+  await assert.rejects(() => blocked.configureConnector({ channel: "email", settings: { host: "smtp.example" } }), /未放行/);
+
+  const { store } = await service();
+  const sdr = new SdrService({
+    store,
+    deploymentConfig: { email: { host: "smtp.baseline.example", port: 587, password_ref: "DSH_SMTP_PASSWORD" } },
+    allowAgentConfig: true,
+  });
+  const configured = await sdr.configureConnector({ channel: "email", settings: { host: "smtp.runtime.example", secure: true, from: "sdr@example.com" } });
+  assert.equal(configured.deployment_config_preserved, true);
+  const status = await sdr.connectorStatus();
+  const email = status.connectors.find((connector) => connector.channel === "email");
+  assert.equal(email.deployment_config.host, "smtp.baseline.example");
+  assert.equal(email.runtime_override.host, "smtp.runtime.example");
+  assert.equal(email.effective_config.port, 587);
+  assert.equal(email.deployment_config.password_ref, "DSH_SMTP_PASSWORD");
+  await assert.rejects(() => sdr.configureConnector({ channel: "email", settings: { password: "plain-secret" } }), /敏感字段/);
+});
