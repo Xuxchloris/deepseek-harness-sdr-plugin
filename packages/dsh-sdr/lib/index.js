@@ -2,10 +2,10 @@ import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
+import { ConnectorRegistry, JsonStore, SdrService, defaultStorePath } from "./domain.js";
 
 const PACKAGE_NAME = "dsh-sdr";
-const VERSION = "0.1.0";
-const DEFAULT_CONTROL_URL = "http://127.0.0.1:8765";
+const VERSION = "0.2.0";
 const SOURCE_PRESET = fileURLToPath(new URL("../presets/sdr/", import.meta.url));
 
 function dshHome() {
@@ -41,134 +41,167 @@ async function installManagedPreset() {
     await mkdir(destination, { recursive: true });
     await copyFile(join(SOURCE_PRESET, "agent.cordis.yml"), join(destination, "agent.cordis.yml"));
     await copyFile(join(SOURCE_PRESET, "preset.yml"), join(destination, "preset.yml"));
-    await writeFile(
-      join(destination, ".dsh-sdr-managed.json"),
-      `${JSON.stringify({ managedBy: PACKAGE_NAME, package: PACKAGE_NAME, version: VERSION }, null, 2)}\n`,
-      "utf8",
-    );
+    await writeFile(join(destination, ".dsh-sdr-managed.json"), `${JSON.stringify({ managedBy: PACKAGE_NAME, package: PACKAGE_NAME, version: VERSION }, null, 2)}\n`, "utf8");
     return destination;
   } catch (error) {
     throw new Error(`dsh-sdr: cannot install managed preset at ${destination}: ${String(error)}`, { cause: error });
   }
 }
 
-async function jsonResponse(response) {
-  const body = await response.text();
-  let value;
-  try {
-    value = JSON.parse(body);
-  } catch {
-    throw new Error(`dsh-sdr control server returned non-JSON (${response.status})`);
-  }
-  if (!response.ok || value.error) throw new Error(value.error || `dsh-sdr control server returned ${response.status}`);
-  return value;
+const objectOutput = {
+  schema: { type: "object", additionalProperties: true },
+  render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }],
+};
+
+const schemas = {
+  createTask: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      task: { type: "string", description: "例如：开发 3 个美国户外用品客户" },
+      market: { type: "string", description: "可选市场代码，如 US、EU、SEA、JP" },
+      product: { type: "string", description: "可选产品名称" },
+      campaign_version: { type: "string", description: "可选活动版本，用于幂等去重" },
+    },
+    required: ["task"],
+  },
+  taskId: {
+    type: "object",
+    additionalProperties: false,
+    properties: { task_id: { type: "string", description: "SDR 任务 ID" } },
+    required: ["task_id"],
+  },
+};
+
+function registerTool(ctx, definition) {
+  return ctx.tools.register({ ...definition, output: objectOutput });
 }
 
-async function controlFetch(url, init, signal) {
-  const response = await fetch(url, { ...init, signal });
-  return jsonResponse(response);
-}
+function registerNativeSdr(ctx, config = {}) {
+  const service = new SdrService({
+    store: new JsonStore(config.dataFile || defaultStorePath()),
+    connectors: new ConnectorRegistry(),
+  });
 
-function output() {
-  return {
-    schema: { type: "object", additionalProperties: true },
-    render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }],
-  };
-}
+  const disposers = [];
+  disposers.push(registerTool(ctx, {
+    name: "sdr_create_task",
+    description: "创建一个可恢复的 SDR 任务。相同请求、市场、产品和活动版本会幂等复用，不会重复开发同一活动。",
+    parameters: schemas.createTask,
+    async execute(args) {
+      try {
+        return await service.createTask({ task: args.task, market: args.market, product: args.product, campaignVersion: args.campaign_version });
+      } catch (error) {
+        return { error: String(error.message || error) };
+      }
+    },
+  }));
 
-function registerNativeGate(ctx, config = {}) {
-  const controlUrl = config.controlUrl || DEFAULT_CONTROL_URL;
+  disposers.push(registerTool(ctx, {
+    name: "sdr_next_step",
+    description: "执行当前任务的下一个 SOP 阶段。阶段由服务端状态机决定，模型不能指定或跳过阶段。到人工审批阶段会结构化阻断。",
+    parameters: schemas.taskId,
+    async execute(args) {
+      try {
+        return await service.nextStep(args.task_id);
+      } catch (error) {
+        return { error: String(error.message || error) };
+      }
+    },
+  }));
+
+  disposers.push(registerTool(ctx, {
+    name: "sdr_review_drafts",
+    description: "在人工审批卡点展示全部开发信草稿，并等待人类选择。此工具是唯一的审批入口，不向模型暴露 approve 或 send 工具。",
+    parameters: schemas.taskId,
+    async execute(args, exec) {
+      try {
+        const pending = await service.getDrafts(args.task_id);
+        if (!pending.drafts.length) return pending;
+        const options = pending.drafts.map((draft) => ({ label: draft.email_id, description: `${draft.company}: ${draft.subject}` }));
+        const detail = pending.drafts.map((draft) => `【${draft.email_id}】${draft.company}\n${draft.subject}\n${draft.body}`).join("\n\n");
+        const answer = await ctx.userQuestions.ask({
+          questions: [{ id: "drafts", header: "SDR 开发信审批", question: "选择允许进入下一阶段的开发信；未选择的草稿会继续保持待审批。", detail, options, multiSelect: true }],
+          signal: exec?.signal,
+        });
+        const selected = answer?.answers?.find((item) => item.id === "drafts")?.selected || [];
+        return await service.reviewDrafts(args.task_id, selected, "dsh-user");
+      } catch (error) {
+        return { error: String(error.message || error) };
+      }
+    },
+  }));
+
+  disposers.push(registerTool(ctx, {
+    name: "sdr_continue_after_approval",
+    description: "审批卡点后的结构化放行。只有每一封草稿都有当前哈希绑定的人工批准凭证时，才允许进入跟进阶段。",
+    parameters: schemas.taskId,
+    async execute(args) {
+      try {
+        return await service.continueAfterApproval(args.task_id);
+      } catch (error) {
+        return { error: String(error.message || error) };
+      }
+    },
+  }));
+
+  disposers.push(registerTool(ctx, {
+    name: "sdr_get_task",
+    description: "读取 SDR 任务的真实持久化状态摘要。",
+    parameters: schemas.taskId,
+    async execute(args) {
+      try {
+        return await service.getTask(args.task_id);
+      } catch (error) {
+        return { error: String(error.message || error) };
+      }
+    },
+  }));
+
+  disposers.push(registerTool(ctx, {
+    name: "sdr_get_report",
+    description: "读取结构化结案报告；任务未到结案阶段时会明确返回 incomplete。",
+    parameters: schemas.taskId,
+    async execute(args) {
+      try {
+        return await service.getReport(args.task_id);
+      } catch (error) {
+        return { error: String(error.message || error) };
+      }
+    },
+  }));
+
+  disposers.push(registerTool(ctx, {
+    name: "sdr_audit_log",
+    description: "读取 SDR 任务的完整事件审计日志，用于回放和结案核验。",
+    parameters: schemas.taskId,
+    async execute(args) {
+      try {
+        return await service.auditLog(args.task_id);
+      } catch (error) {
+        return { error: String(error.message || error) };
+      }
+    },
+  }));
+
+  disposers.push(registerTool(ctx, {
+    name: "sdr_connector_status",
+    description: "查看 Email、WhatsApp、CRM connector 的注册状态；默认全部 dry-run，不会发送真实消息。",
+    parameters: { type: "object", additionalProperties: false, properties: {} },
+    async execute() {
+      return service.connectorStatus();
+    },
+  }));
+
   const disposeGuard = ctx.tools.guard((execution) => {
     const name = String(execution.name || "").toLowerCase();
-    if (name.includes("approve") || name.includes("send_email") || name.includes("send-email")) {
-      return "SDR 审批和发送只能由原生人工审批门控完成；模型不能直接批准或发送邮件。";
+    if (name.includes("approve") || name.includes("send_email") || name.includes("send-email") || name === "send") {
+      return "SDR 审批和发送只能由原生人工审批门控完成；模型不能直接批准或发送消息。";
     }
     return undefined;
   });
-
-  const disposeReview = ctx.tools.register({
-    name: "sdr_review_drafts",
-    description: "在 SDR 人工审批卡点展示开发信草稿，并等待人类选择要批准的草稿。未获人类选择时任务保持暂停。",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        task_id: { type: "string", description: "待审批的 SDR task_id。" },
-      },
-      required: ["task_id"],
-    },
-    output: output(),
-    async execute(args, exec) {
-      const pending = await controlFetch(
-        `${controlUrl}/control/pending?task_id=${encodeURIComponent(args.task_id)}`,
-        undefined,
-        exec.signal,
-      );
-      const drafts = pending.drafts || [];
-      if (drafts.length === 0) return { task_id: args.task_id, approved: [], pending: [] };
-      const options = drafts.map((draft) => ({
-        label: draft.email_id,
-        description: `${draft.company || "客户"}: ${draft.subject || "开发信草稿"}`,
-      }));
-      const detail = drafts.map((draft) => `【${draft.email_id}】${draft.company || ""}\n${draft.subject || ""}\n${draft.body || ""}`).join("\n\n");
-      const answer = await ctx.userQuestions.ask({
-        questions: [{
-          id: "drafts",
-          header: "SDR 开发信审批",
-          question: "选择允许进入下一阶段的开发信；未选择的草稿会继续保持待审批。",
-          detail,
-          options,
-          multiSelect: true,
-        }],
-        signal: exec.signal,
-      });
-      const selected = new Set(answer.answers?.find((item) => item.id === "drafts")?.selected || []);
-      const approved = [];
-      for (const draft of drafts) {
-        if (!selected.has(draft.email_id)) continue;
-        approved.push(await controlFetch(`${controlUrl}/control/approve`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            task_id: args.task_id,
-            email_id: draft.email_id,
-            draft_hash: draft.draft_hash,
-            approver: "dsh-user",
-            source: "dsh-native-gate",
-          }),
-        }, exec.signal));
-      }
-      return {
-        task_id: args.task_id,
-        approved: approved.map((item) => item.result?.email_id).filter(Boolean),
-        pending: drafts.filter((draft) => !selected.has(draft.email_id)).map((draft) => draft.email_id),
-        requires_all_before_advance: true,
-      };
-    },
-  });
-
-  const disposeAudit = ctx.tools.register({
-    name: "sdr_audit_log",
-    description: "读取 SDR 任务的完整工具调用审计日志，用于回放和结案核验。",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        task_id: { type: "string", description: "SDR task_id。" },
-      },
-      required: ["task_id"],
-    },
-    output: output(),
-    async execute(args, exec) {
-      return controlFetch(`${controlUrl}/control/audit?task_id=${encodeURIComponent(args.task_id)}`, undefined, exec.signal);
-    },
-  });
-
-  return () => {
-    disposeReview();
-    disposeAudit();
-    disposeGuard();
-  };
+  disposers.push(disposeGuard);
+  return () => disposers.splice(0).reverse().forEach((dispose) => dispose?.());
 }
 
 export async function apply(ctx, config = {}) {
@@ -176,7 +209,7 @@ export async function apply(ctx, config = {}) {
     await installManagedPreset();
     return;
   }
-  if (config.role === "agent") return registerNativeGate(ctx, config);
+  if (config.role === "agent") return registerNativeSdr(ctx, config);
 }
 
-export { installManagedPreset, targetPreset };
+export { ConnectorRegistry, JsonStore, SdrService, defaultStorePath, installManagedPreset, targetPreset };

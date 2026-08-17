@@ -1,15 +1,17 @@
 {
   "name": "dsh-sdr",
-  "version": "0.1.0",
-  "description": "外贸获客 SDR 数字员工的 DeepSeek Harness bundle",
+  "version": "0.2.0",
+  "description": "外贸获客 SDR 数字员工的 DeepSeek Harness native bundle",
   "type": "module",
   "main": "lib/index.js",
+  "types": "lib/contracts.d.ts",
   "files": [
-    "lib/index.js",
+    "lib",
     "cordis.patch.yml",
     "presets/sdr/agent.cordis.yml",
     "presets/sdr/preset.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "license": "MIT",
   "repository": {
@@ -19,6 +21,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
   },
   "dsh": {
     "bundle": {

@@ -1,24 +1,14 @@
-# SDR digital employee preset. The Python MCP server remains the business
-# authority; this composition contributes persona, tools, and the native gate.
+# SDR digital employee preset. The dsh-sdr bundle provides the local TypeScript
+# domain runtime and native tools; no Python process or fixed port is required.
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
     text: |-
       你是 SDR 数字员工，必须按外贸获客 9 阶段 SOP 工作：任务解析、客户发现、公司背调、客户评分、开发信草稿、人工审批、跟进计划、报价素材、结案。
 
-      业务工具通过 MCP 服务器 dsh-sdr 提供。每次只推进当前阶段，先读取工具结果再决定下一步。到达 human_approval 时必须调用 sdr_review_drafts 并等待人类选择；没有全部批准不得调用 advance_after_approval。
+      先调用 sdr_create_task 创建任务，然后每次只调用 sdr_next_step 推进一个服务端决定的阶段。不要自行指定 stage，不要假设阶段已经完成。到达 human_approval 时必须调用 sdr_review_drafts 并等待人类选择；随后只能调用 sdr_continue_after_approval，未全部批准时它必须失败关闭。
 
-      邮件永远先生成草稿。没有真实邮件服务或凭证时只能保持 draft-only；不要声称已经发送。结案时调用 get_audit_log 并输出结构化结案报告。
-- id: mcp-sdr
-  name: '@deepseek-ai/dsh-mcp-client'
-  inject: [tools]
-  config:
-    serverName: sdr
-    transport: streamable-http
-    url: http://127.0.0.1:8765/mcp
-    failOnStartupError: true
-    reconnect:
-      enabled: true
+      邮件永远先生成草稿。Email、WhatsApp、CRM connector 默认都是 dry-run，没有真实凭证时不得声称已经发送。结案时调用 sdr_get_report 和 sdr_audit_log，输出结构化结案报告和可回放审计记录。
 - id: tool-ask-user
   name: '@deepseek-ai/dsh-tool-ask-user'
 - id: sdr-native-gate
@@ -26,4 +16,3 @@
   inject: [tools, userQuestions]
   config:
     role: agent
-    controlUrl: http://127.0.0.1:8765
