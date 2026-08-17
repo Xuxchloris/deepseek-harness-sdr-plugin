@@ -22,7 +22,14 @@
 - DeepSeek Harness `0.1.0-rc.6`
 - Node.js `20+`
 
-从 GitHub 获取后安装：
+从 npm 一条命令安装：
+
+```powershell
+dsh plugin --profile web add @xuxchloris/dsh-sdr
+dsh web
+```
+
+从 GitHub 源码安装：
 
 ```powershell
 git clone https://github.com/Xuxchloris/deepseek-harness-sdr-plugin.git

@@ -4,10 +4,17 @@
 
 ## 安装和重载
 
-在本仓库目录执行：
+从 npm 安装：
 
 ```powershell
-dsh plugin --profile web add "E:\ai-sdr\packages\dsh-sdr"
+dsh plugin --profile web add @xuxchloris/dsh-sdr
+dsh web
+```
+
+从 GitHub 源码安装：
+
+```powershell
+dsh plugin --profile web add ".\packages\dsh-sdr"
 dsh web
 ```
 

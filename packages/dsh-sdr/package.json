@@ -1,7 +1,7 @@
 {
-  "name": "dsh-sdr",
+  "name": "@xuxchloris/dsh-sdr",
   "version": "0.2.0",
-  "description": "外贸获客 SDR 数字员工的 DeepSeek Harness native bundle",
+  "description": "DeepSeek Harness plugin for a controllable SDR digital employee",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/contracts.d.ts",
@@ -14,6 +14,18 @@
     "LICENSE"
   ],
   "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "sdr",
+    "sales-agent",
+    "rag"
+  ],
+  "homepage": "https://github.com/Xuxchloris/deepseek-harness-sdr-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/Xuxchloris/deepseek-harness-sdr-plugin/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/Xuxchloris/deepseek-harness-sdr-plugin.git",
@@ -21,6 +33,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "test": "node --test test/*.test.js"
