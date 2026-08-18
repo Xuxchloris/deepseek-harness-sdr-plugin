@@ -42,6 +42,21 @@ Agent 调用 `sdr_create_task` 创建任务，然后反复调用 `sdr_next_step`
 
 第 6 阶段时，`sdr_review_drafts` 列出开发信草稿，等人工选择。只要还有草稿没批，`sdr_continue_after_approval` 就拒绝放行。批准凭证绑定草稿内容哈希：草稿改过后，原来的批准自动失效，需要重新审批。
 
+用离线演示跑一遍，实际顺序是这样的：
+
+```text
+> 开发 3 个美国户外用品客户
+
+sdr_create_task              创建任务，进入 task_parse
+sdr_next_step × 4            客户发现 → 公司背调 → 评分 → 生成 3 封开发信草稿
+sdr_next_step                进入 human_approval，流程停在这里
+sdr_continue_after_approval  拒绝：仍有 3 封草稿未获批准
+sdr_review_drafts            列出 3 封草稿，等人工逐封选择
+（人工批准全部草稿）
+sdr_continue_after_approval  校验草稿哈希，放行
+sdr_next_step × 3            跟进计划 → 报价素材 → 结案报告，附 11 条审计事件
+```
+
 没有 DSH Web 时可以跑离线演示，合成数据，不需要凭证：
 
 ```powershell
