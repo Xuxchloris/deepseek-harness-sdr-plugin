@@ -29,6 +29,29 @@ dsh plugin --profile web add @xuxchloris/dsh-sdr
 dsh web
 ```
 
+### 维护者发布（Trusted Publishing）
+
+npm 发布采用 GitHub Actions OIDC，不在仓库或 GitHub Secrets 中保存长期 npm token。发布工作流位于 `.github/workflows/npm-publish.yml`，只响应 `dsh-sdr-v*` 标签，并在发布前运行插件测试。
+
+首次发布一个尚不存在的 npm 包时，npm 还没有包设置页可绑定 Trusted Publisher，需要使用一次短期、仅限 `@xuxchloris` scope 的 granular token 完成首发。首发成功后立即撤销该 token，然后在 npm 包设置中配置：
+
+```text
+Provider: GitHub Actions
+User: Xuxchloris
+Repository: deepseek-harness-sdr-plugin
+Workflow filename: npm-publish.yml
+Allowed action: npm publish
+```
+
+之后将版本号递增并推送标签即可：
+
+```powershell
+git tag dsh-sdr-v0.2.1
+git push origin dsh-sdr-v0.2.1
+```
+
+GitHub Actions 使用 Node 24 和 `id-token: write`，npm 会为每次发布签发短期 OIDC 凭据并自动生成 provenance。首次 Trusted Publishing 发布成功后，建议在 npm 包设置中启用「Require two-factor authentication and disallow tokens」。
+
 从 GitHub 源码安装：
 
 ```powershell

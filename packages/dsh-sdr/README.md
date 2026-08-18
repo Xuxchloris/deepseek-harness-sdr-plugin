@@ -26,6 +26,29 @@ $DSH_HOME/.agent-presets/sdr
 
 Windows 未设置 `DSH_HOME` 时，默认是 `%USERPROFILE%\\.dsh\\.agent-presets\\sdr`。安装器不会覆盖没有 `.dsh-sdr-managed.json` 标记的同名 preset。
 
+## 维护者发布
+
+本包通过仓库根目录的 `.github/workflows/npm-publish.yml` 发布。工作流只接受 `dsh-sdr-v*` 标签，使用 GitHub Actions OIDC，不需要 npm token；发布前会运行 `npm test`。
+
+首次发布尚不存在的包时，npm 尚未生成包设置页，需用一次短期 granular token 完成 `0.2.0` 首发，并在发布后立即撤销。随后在 npm 包设置的 **Trusted Publisher** 中填写：
+
+```text
+Provider: GitHub Actions
+User: Xuxchloris
+Repository: deepseek-harness-sdr-plugin
+Workflow filename: npm-publish.yml
+Allowed action: npm publish
+```
+
+绑定完成后，只需递增版本并推送标签：
+
+```powershell
+git tag dsh-sdr-v0.2.1
+git push origin dsh-sdr-v0.2.1
+```
+
+GitHub Actions 使用 Node 24、`id-token: write` 和 npm Trusted Publishing。它不会读取或写入 npm token；公开仓库的发布会自动生成 provenance。Trusted Publisher 验证成功后，建议在 npm 包设置中启用「Require two-factor authentication and disallow tokens」。
+
 ## 使用
 
 在 SDR 模式中派单，例如：
